@@ -6,7 +6,8 @@
 typedef unsigned int uint32;
 
 #define check_cuda_errors(val) check_cuda(val, #val, __FILE__, __LINE__)
-void check_cuda(cudaError_t result, char const *const func, const char *const file, int const line)
+/* Вывод отладочной информации работы CUDA, при условии что работа GPU приостанавливается ошибкой. */
+void check_cuda(cudaError_t result, const char *const func, const char *const file, int const line)
 {
 	if (result) {
 		std::cerr << "CUDA error: " << static_cast<uint32>(result) << " at " <<
@@ -23,7 +24,12 @@ __global__ void render(double *fb, int imgwidth, int imgheight)
 	
 	if ((i >= imgwidth) || (j >= imgheight)) return;
 
+	/* Пример: 1200x1600
+	   0, 3, 6, ... , 3597
+	   3600,    ... , 7197 */
 	int pixidx = j*imgwidth*3 + i*3;
+	
+	/* Вывод градиента */
 	fb[pixidx + 0] = double(i)/imgwidth;
 	fb[pixidx + 1] = double(j)/imgheight;
 	fb[pixidx + 2] = 0.0;
@@ -31,8 +37,8 @@ __global__ void render(double *fb, int imgwidth, int imgheight)
 
 int main()
 {
-	int IMAGE_WIDTH  = 1200,
-		IMAGE_HEIGHT = 600;
+	int IMAGE_WIDTH  = 12,
+		IMAGE_HEIGHT = 6;
 
 	int tx = 8,
 		ty = 8;
@@ -50,11 +56,13 @@ int main()
 			stop;
 
 	start = clock();
+
 	dim3 blocks(IMAGE_WIDTH/tx + 1, IMAGE_HEIGHT/ty + 1);
 	dim3 threads(tx, ty);
 	render<<<blocks, threads>>>(fb, IMAGE_WIDTH, IMAGE_HEIGHT);
 	check_cuda_errors(cudaGetLastError());
 	check_cuda_errors(cudaDeviceSynchronize());
+
 	stop = clock();
 
 	double timer = ((double)(stop-start)) / CLOCKS_PER_SEC;
