@@ -2,6 +2,7 @@
 #include <time.h>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
+#include "engine_settings.h"
 
 typedef unsigned int uint32;
 
@@ -17,28 +18,26 @@ void check_cuda(cudaError_t result, const char *const func, const char *const fi
 	}
 }
 
-__global__ void render(double *fb, int imgwidth, int imgheight)
+__global__ void render(vec3 *fb, int imgwidth, int imgheight)
 {
 	int i = threadIdx.x + blockIdx.x * blockDim.x;
 	int j = threadIdx.y + blockIdx.y * blockDim.y;
 	
 	if ((i >= imgwidth) || (j >= imgheight)) return;
 
-	/* Пример: 1200x1600
+	/* Пример: 1200x600
 	   0, 3, 6, ... , 3597
 	   3600,    ... , 7197 */
-	int pixidx = j*imgwidth*3 + i*3;
+	int pixidx = j*imgwidth + i;
 	
-	/* Вывод градиента */
-	fb[pixidx + 0] = double(i)/imgwidth;
-	fb[pixidx + 1] = double(j)/imgheight;
-	fb[pixidx + 2] = 0.0;
+	/* Запись градиента */
+	fb[pixidx] = vec3(double(i)/imgwidth, double(j)/imgheight, 0.0);
 }
 
 int main()
 {
-	int IMAGE_WIDTH  = 12,
-		IMAGE_HEIGHT = 6;
+	int IMAGE_WIDTH  = 1200,
+		IMAGE_HEIGHT = 600;
 
 	int tx = 8,
 		ty = 8;
@@ -47,9 +46,9 @@ int main()
 	std::cerr << "in " << tx << 'x' << ty << " blocks.\n";
 
 	int num_pix = IMAGE_WIDTH * IMAGE_HEIGHT;
-	size_t fb_size = 3*num_pix*sizeof(double);
+	size_t fb_size = num_pix*sizeof(vec3);
 
-	double *fb;
+	vec3 *fb;
 	check_cuda_errors(cudaMallocManaged((void **)&fb, fb_size));
 
 	clock_t start,
@@ -71,15 +70,8 @@ int main()
 	std::cout << "P3\n" << IMAGE_WIDTH << ' ' << IMAGE_HEIGHT << "\n255\n";
 	for (int j = 0; j < IMAGE_HEIGHT; ++j) {
 		for (int i = 0; i < IMAGE_WIDTH; ++i) {
-			size_t pixidx = j*3*IMAGE_WIDTH + i*3;
-			double r = fb[pixidx + 0];
-			double g = fb[pixidx + 1];
-			double b = fb[pixidx + 2];
-
-			int ir = int(255.999 * r);
-			int ig = int(255.999 * g);
-			int ib = int(255.999 * b);
-			std::cout << ir << ' ' << ig << ' ' << ib << "\n";
+			size_t pixidx = j*IMAGE_WIDTH + i;
+			write_color(std::cout, &fb[pixidx]);
 		}
 	}
 	check_cuda_errors(cudaFree(fb));
