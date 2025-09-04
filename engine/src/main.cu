@@ -1,4 +1,4 @@
-#include <iostream>
+п»ї#include <iostream>
 #include <time.h>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
@@ -7,7 +7,7 @@
 typedef unsigned int uint32;
 
 #define check_cuda_errors(val) check_cuda(val, #val, __FILE__, __LINE__)
-/* Вывод отладочной информации работы CUDA, при условии что работа GPU приостанавливается ошибкой. */
+/* Р’С‹РІРѕРґ РѕС‚Р»Р°РґРѕС‡РЅРѕР№ РёРЅС„РѕСЂРјР°С†РёРё СЂР°Р±РѕС‚С‹ CUDA, РїСЂРё СѓСЃР»РѕРІРёРё С‡С‚Рѕ СЂР°Р±РѕС‚Р° GPU РїСЂРёРѕСЃС‚Р°РЅР°РІР»РёРІР°РµС‚СЃСЏ РѕС€РёР±РєРѕР№. */
 void check_cuda(cudaError_t result, const char *const func, const char *const file, int const line)
 {
 	if (result) {
@@ -24,13 +24,13 @@ __global__ void render(vec3 *fb, int imgwidth, int imgheight)
 	int j = threadIdx.y + blockIdx.y * blockDim.y;
 	
 	if ((i >= imgwidth) || (j >= imgheight)) return;
-
-	/* Пример: 1200x600
+	
+	/* РџСЂРёРјРµСЂ: 1200x600
 	   0, 3, 6, ... , 3597
 	   3600,    ... , 7197 */
 	int pixidx = j*imgwidth + i;
 	
-	/* Запись градиента */
+	/* Р—Р°РїРёСЃСЊ РіСЂР°РґРёРµРЅС‚Р° */
 	fb[pixidx] = vec3(double(i)/imgwidth, double(j)/imgheight, 0.0);
 }
 
