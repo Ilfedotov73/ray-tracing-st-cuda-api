@@ -1,4 +1,4 @@
-#ifndef RT_SETTINGS_H
+﻿#ifndef RT_SETTINGS_H
 #define RT_SETTINGS_H
 
 #include <iostream>
@@ -15,4 +15,6 @@ __host__ __device__ inline double random_double(double min, double max) { return
 
 #include "vec3.h"
 #include "color.h"
+#include "ray.h"
+
 #endif
