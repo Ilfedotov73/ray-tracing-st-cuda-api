@@ -18,19 +18,25 @@ void check_cuda(cudaError_t result, const char *const func, const char *const fi
 	}
 }
 
-__device__ bool hit_sphere(const point3& center, double radius, const ray& r)
+__device__ double hit_sphere(const point3& center, double radius, const ray& r)
 {
 	vec3 oc = center - r.origin();
-	double a = dot(r.direction(), r.direction());
-	double b = -2.0 * dot(r.direction(), oc);
-	double c = dot(oc, oc) - radius*radius;
-	double disc = b*b - 4*a*c;
-	return (disc >= 0);
+	double a = r.direction().length_squared();
+	double h = dot(r.direction(), oc);
+	double c = oc.length_squared() - radius * radius;
+	double discriminant = h*h - 4*a*c;
+	
+	if (discriminant < 0) { return -1.0; }
+	return (h - sqrt(discriminant))/a;
 }
 
 __device__ color ray_color(const ray& r)
 {
-	if (hit_sphere(point3(0,0,-1), 0.5, r)) { return color(1,0,0); }
+	double t = hit_sphere(point3(0,0,-1), 0.5, r);
+	if (t > 0.0) {
+		vec3 N = unitv(r.at(t) - vec3(0,0,-1));
+		return 0.5*color(N.x()+1, N.y()+1, N.z()+1);
+	}
 	vec3 unit_direction = unitv(r.direction());
 	double a = 0.5*(unit_direction.y() + 1.0);
 	return (1.0-a)*color(1.0, 1.0, 1.0) + a*color(0.5, 0.7, 1.0);
