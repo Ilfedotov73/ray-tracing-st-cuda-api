@@ -17,7 +17,6 @@ __host__ __device__ inline double random_double(double min, double max) { return
 #include "vec3.h"
 #include "color.h"
 #include "ray.h"
-#include "interval.h"
 #include "hittable.h"
 #include "hittable_list.h"
 #include "sphere.h"

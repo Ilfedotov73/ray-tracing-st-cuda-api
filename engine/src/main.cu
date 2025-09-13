@@ -20,7 +20,7 @@ void check_cuda(cudaError_t result, const char *const func, const char *const fi
 __device__ color ray_color(const ray& r, hittable** world)
 {
 	hit_record rec;
-	if ((*world)->hit(r, interval(0.0, DBL_MAX), rec)) {
+	if ((*world)->hit(r, 0.0, DBL_MAX, rec)) {
 		return 0.5*(rec.normal + color(1,1,1));
 	}
 
