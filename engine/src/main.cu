@@ -1,5 +1,4 @@
-﻿#include <iostream>
-#include <time.h>
+﻿#include <time.h>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include "engine_settings.h"
@@ -18,32 +17,21 @@ void check_cuda(cudaError_t result, const char *const func, const char *const fi
 	}
 }
 
-__device__ double hit_sphere(const point3& center, double radius, const ray& r)
+__device__ color ray_color(const ray& r, hittable** world)
 {
-	vec3 oc = center - r.origin();
-	double a = r.direction().length_squared();
-	double h = dot(r.direction(), oc);
-	double c = oc.length_squared() - radius * radius;
-	double discriminant = h*h - 4*a*c;
-	
-	if (discriminant < 0) { return -1.0; }
-	return (h - sqrt(discriminant))/a;
-}
-
-__device__ color ray_color(const ray& r)
-{
-	double t = hit_sphere(point3(0,0,-1), 0.5, r);
-	if (t > 0.0) {
-		vec3 N = unitv(r.at(t) - vec3(0,0,-1));
-		return 0.5*color(N.x()+1, N.y()+1, N.z()+1);
+	hit_record rec;
+	if ((*world)->hit(r, interval(0.0, DBL_MAX), rec)) {
+		return 0.5*(rec.normal + color(1,1,1));
 	}
+
 	vec3 unit_direction = unitv(r.direction());
 	double a = 0.5*(unit_direction.y() + 1.0);
 	return (1.0-a)*color(1.0, 1.0, 1.0) + a*color(0.5, 0.7, 1.0);
 }
 
-__global__ void render(vec3 *fb, int imgwidth, int imgheight, vec3 pixel00_loc, 
-					   vec3 pixel_delta_u, vec3 pixel_delta_v, point3 camera_center)
+__global__ void render(vec3* fb, int imgwidth, int imgheight, vec3 pixel00_loc, 
+					   vec3 pixel_delta_u, vec3 pixel_delta_v, point3 camera_center,
+					   hittable** world)
 {
 	int i = threadIdx.x + blockIdx.x * blockDim.x;
 	int j = threadIdx.y + blockIdx.y * blockDim.y;
@@ -55,13 +43,29 @@ __global__ void render(vec3 *fb, int imgwidth, int imgheight, vec3 pixel00_loc,
 	vec3 ray_direction = pixel - camera_center;
 
 	ray r(camera_center, ray_direction);
-	fb[pixidx] = ray_color(r);
+	fb[pixidx] = ray_color(r, world);
+}
+
+__global__ void create_world(hittable** d_list, hittable** d_world)
+{
+	if (threadIdx.x == 0 &&  blockIdx.x == 0) {
+		*(d_list)   = new sphere(vec3(0,0,-1), 0.5);
+		*(d_list+1) = new sphere(vec3(0, -100.5, -1), 100);
+		*d_world	= new hittable_list(d_list,2);
+	}
+}
+
+__global__ void free_world(hittable** d_list, hittable** d_world)
+{
+	delete *(d_list);
+	delete *(d_list+1);
+	delete *d_world;
 }
 
 int main()
 {
 	/* Image */
-	double ASPECT_RATIO = 16.9 / 9.0;
+	double ASPECT_RATIO = 16.0 / 8.0;
 	int IMAGE_WIDTH  = 1200;
 
 	int IMAGE_HEIGHT = int(IMAGE_WIDTH / ASPECT_RATIO);
@@ -82,17 +86,28 @@ int main()
 	point3 VIEWPORT_UPPER_LEFT = CAMERA_CENTER - vec3(0, 0, FOCAL_LENGTH) - VIEWPORT_U/2 - VIEWPORT_V/2;
 	point3 PIXEL00_LOC = VIEWPORT_UPPER_LEFT + 0.5 * (PIXEL_DELTA_U + PIXEL_DELTA_V);
 
+	int num_pix = IMAGE_WIDTH * IMAGE_HEIGHT;
+	size_t fb_size = num_pix*sizeof(vec3);
+
+	vec3* fb;
+	check_cuda_errors(cudaMallocManaged((void**)&fb, fb_size));
+	
+	/* World */
+	hittable** d_list;
+	check_cuda_errors(cudaMalloc((void**)&d_list, 2*sizeof(hittable*)));
+	
+	hittable** d_world;
+	check_cuda_errors(cudaMalloc((void**)&d_world, sizeof(hittable*)));
+
+	create_world<<<1,1>>>(d_list, d_world);
+	check_cuda_errors(cudaGetLastError());
+	check_cuda_errors(cudaDeviceSynchronize());
+
 	int tx = 8,
 		ty = 8;
 
 	std::cerr << "Rendering a " << IMAGE_WIDTH << 'x' << IMAGE_HEIGHT << " image ";
 	std::cerr << "in " << tx << 'x' << ty << " blocks.\n";
-
-	int num_pix = IMAGE_WIDTH * IMAGE_HEIGHT;
-	size_t fb_size = num_pix*sizeof(vec3);
-
-	vec3 *fb;
-	check_cuda_errors(cudaMallocManaged((void **)&fb, fb_size));
 
 	clock_t start,
 			stop;
@@ -102,7 +117,7 @@ int main()
 	dim3 blocks(IMAGE_WIDTH/tx + 1, IMAGE_HEIGHT/ty + 1);
 	dim3 threads(tx, ty);
 	render<<<blocks, threads>>>(fb, IMAGE_WIDTH, IMAGE_HEIGHT, PIXEL00_LOC, PIXEL_DELTA_U,
-								PIXEL_DELTA_V, CAMERA_CENTER);
+								PIXEL_DELTA_V, CAMERA_CENTER, d_world);
 	check_cuda_errors(cudaGetLastError());
 	check_cuda_errors(cudaDeviceSynchronize());
 
@@ -119,5 +134,13 @@ int main()
 			write_color(std::cout, &fb[pixidx]);
 		}
 	}
+	free_world<<<1,1>>>(d_list, d_world);
+	check_cuda_errors(cudaDeviceSynchronize());
+	check_cuda_errors(cudaGetLastError());
+
+	check_cuda_errors(cudaFree(d_list));
+	check_cuda_errors(cudaFree(d_world));
 	check_cuda_errors(cudaFree(fb));
+
+	cudaDeviceReset();
 }
