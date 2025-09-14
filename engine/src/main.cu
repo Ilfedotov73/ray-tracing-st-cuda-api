@@ -20,7 +20,7 @@ void check_cuda(cudaError_t result, const char *const func, const char *const fi
 __device__ color ray_color(const ray& r, hittable** world)
 {
 	hit_record rec;
-	if ((*world)->hit(r, 0.0, DBL_MAX, rec)) {
+	if ((*world)->hit(r, interval(0.0, DBL_MAX), rec)) {
 		return 0.5*(rec.normal + color(1,1,1));
 	}
 
@@ -64,6 +64,11 @@ __global__ void free_world(hittable** d_list, hittable** d_world)
 
 int main()
 {
+	/* Stack size */
+	size_t new_stack_size = 2 * 1024;
+	check_cuda_errors(cudaDeviceSetLimit(cudaLimitStackSize, new_stack_size));
+	std::cerr << "Stack size limit: " << new_stack_size << " bytes" << '\n';
+	
 	/* Image */
 	double ASPECT_RATIO = 16.0 / 8.0;
 	int IMAGE_WIDTH  = 1200;
@@ -123,7 +128,7 @@ int main()
 
 	stop = clock();
 
-	/* print in .ppm file */
+	/* Print in .ppm file */
 	double timer = ((double)(stop-start)) / CLOCKS_PER_SEC;
 	std::cerr << "took " << timer << " seconds.\n";
 
