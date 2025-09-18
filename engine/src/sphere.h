@@ -9,7 +9,7 @@ private:
 public:
 	__device__ sphere(const point3& center, double radius) : center(center), radius(radius) {}
 
-	__device__ bool hit(const ray& r, interval ray_t, hit_record& rec) const override
+	__device__ bool hit(const ray& r, double t_min, double t_max, hit_record& rec) const override
 	{
 		vec3 oc = center - r.origin();
 		double a = r.direction().length_squared();
@@ -22,9 +22,9 @@ public:
 
 		double root = (h - sqrtd) / a;
 		
-		if (!ray_t.surrounds(root)) {
+		if (!(t_min < root && root < t_max)) {
 			root = (h + sqrtd) / a;
-			if (!ray_t.surrounds(root)) { return false; }
+			if (!(t_min < root && root < t_max)) { return false; }
 		}
 
 		rec.p = r.at(root);
