@@ -1,12 +1,14 @@
 ﻿#ifndef RAY_H
 #define RAY_H
 
+#include "vec3.h"
+
 class ray
 {
-private:
+public:
 	point3 orig;
 	vec3   dir;
-public:
+
 	__device__ ray() {}
 	__device__ ray(const point3& origin, const vec3& direction) : orig(origin), dir(direction) {}
 

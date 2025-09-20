@@ -1,7 +1,17 @@
-﻿#include <time.h>
+﻿#include <iostream>
+#include <time.h>
+#include <float.h>
+#include <curand_kernel.h>
+#include "vec3.h"
+#include "ray.h"
+#include "color.h"
+#include "hittable.h"
+#include "hittable_list.h"
+#include "sphere.h"
+#include "camera.h"
+
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
-#include "engine_settings.h"
 
 typedef unsigned int uint32;
 
@@ -17,11 +27,45 @@ void check_cuda(cudaError_t result, const char *const func, const char *const fi
 	}
 }
 
-__global__ void render_init(vec3* fb, hittable** world, camera** camera)
+__device__ color ray_color(const ray& r, hittable** world)
+{
+	hit_record rec;
+	if ((*world)->hit(r, 0.0, DBL_MAX, rec)) {
+		return 0.5 * (rec.normal + color(1, 1, 1));
+	}
+
+	vec3 unit_direction = unitv(r.direction());
+	double a = 0.5 * (unit_direction.y() + 1.0);
+	return (1.0 - a) * color(1.0, 1.0, 1.0) + a * color(0.5, 0.7, 1.0);
+}
+
+__global__ void rnd_render_init(int imgwidth, int imgheight, curandState* rand_state)
 {
 	int i = threadIdx.x + blockIdx.x * blockDim.x;
 	int j = threadIdx.y + blockIdx.y * blockDim.y;
-	(*camera)->render(fb, world, i, j);
+	if ((i >= imgwidth) || (j >= imgheight)) { return; }
+	int pixidx = j*imgwidth+i;
+	curand_init(1984, pixidx, 0, &rand_state[pixidx]);
+}
+
+__global__ void render(vec3* fb, hittable** world, camera** cam, curandState* rand_state, int imgwidth, int imgheight,
+					   int samples_per_pixel)
+{
+	int i = threadIdx.x + blockIdx.x * blockDim.x;
+	int j = threadIdx.y + blockIdx.y * blockDim.y;
+	if ((i >= imgwidth) || (j >= imgheight)) { return; }
+	int pixidx = j*imgwidth+i;
+
+	curandState local_rand_state = rand_state[pixidx];
+
+	color pixel_color(0,0,0);
+	for (int sample = 0; sample < samples_per_pixel; ++sample) {
+		double u = (i + curand_uniform_double(&local_rand_state) - 0.5) / imgwidth;
+		double v = (j + curand_uniform_double(&local_rand_state) - 0.5) / imgheight;
+		ray r = (*cam)->get_ray(u,v);
+		pixel_color += ray_color(r, world);
+	}
+	fb[pixidx] = pixel_color / samples_per_pixel;
 }
 
 __global__ void create_world(hittable** d_list, hittable** d_world, camera** d_camera, int imgwidth, int imgheight)
@@ -30,11 +74,7 @@ __global__ void create_world(hittable** d_list, hittable** d_world, camera** d_c
 		*(d_list)   = new sphere(vec3(0,0,-1), 0.5);
 		*(d_list+1) = new sphere(vec3(0, -100.5, -1), 100);
 		*d_world	= new hittable_list(d_list,2);
-
 		*d_camera   = new camera();
-		(*d_camera)->ASPECT_RATIO = 16.0 / 8.0;
-		(*d_camera)->IMAGE_WIDTH  = imgwidth;
-		(*d_camera)->IMAGE_HEIGHT = imgheight;
 	}
 }
 
@@ -48,8 +88,9 @@ __global__ void free_world(hittable** d_list, hittable** d_world, camera** d_cam
 
 int main()
 {	
-	int IMAGE_WIDTH  = 1200,
-		IMAGE_HEIGHT = 600;
+	int IMAGE_WIDTH       = 1200,
+		IMAGE_HEIGHT      = 600,
+		SAMPLES_PER_PIXEL = 100;
 
 	int num_pix = IMAGE_WIDTH * IMAGE_HEIGHT;
 	size_t fb_size = num_pix*sizeof(vec3);
@@ -57,6 +98,9 @@ int main()
 	vec3* fb;
 	check_cuda_errors(cudaMallocManaged((void**)&fb, fb_size));
 	
+	curandState* d_rand_state;
+	check_cuda_errors(cudaMalloc((void**)&d_rand_state, num_pix*sizeof(curandState)));
+
 	/* World */
 	hittable** d_list;
 	check_cuda_errors(cudaMalloc((void**)&d_list, 2*sizeof(hittable*)));
@@ -78,11 +122,14 @@ int main()
 	std::cerr << "Rendering a " << IMAGE_WIDTH << 'x' << IMAGE_HEIGHT << " image ";
 	std::cerr << "in " << tx << 'x' << ty << " blocks.\n";
 
+	rnd_render_init<<<blocks, threads>>>(IMAGE_WIDTH, IMAGE_HEIGHT, d_rand_state);
+	check_cuda_errors(cudaGetLastError());
+	check_cuda_errors(cudaDeviceSynchronize());
+
 	clock_t start, stop;
 
 	start = clock();
-
-	render_init<<<blocks, threads>>>(fb, d_world, d_camera);
+	render<<<blocks, threads>>>(fb, d_world, d_camera, d_rand_state, IMAGE_WIDTH, IMAGE_HEIGHT, SAMPLES_PER_PIXEL);
 	check_cuda_errors(cudaGetLastError());
 	check_cuda_errors(cudaDeviceSynchronize());
 
@@ -93,10 +140,11 @@ int main()
 	std::cerr << "took " << timer << " seconds.\n";
 
 	std::cout << "P3\n" << IMAGE_WIDTH << ' ' << IMAGE_HEIGHT << "\n255\n";
-	for (int j = 0; j < IMAGE_HEIGHT; ++j) {
+	color_print print(0.000, 0.999);
+	for (int j = IMAGE_HEIGHT - 1; j >= 0; --j) {
 		for (int i = 0; i < IMAGE_WIDTH; ++i) {
 			size_t pixidx = j*IMAGE_WIDTH + i;
-			write_color(std::cout, &fb[pixidx]);
+			print.write_color(std::cout, &fb[pixidx]);
 		}
 	}
 
@@ -106,6 +154,7 @@ int main()
 	check_cuda_errors(cudaFree(d_list));
 	check_cuda_errors(cudaFree(d_world));
 	check_cuda_errors(cudaFree(d_camera));
+	check_cuda_errors(cudaFree(d_rand_state));
 	check_cuda_errors(cudaFree(fb));
 	cudaDeviceReset();
 }
