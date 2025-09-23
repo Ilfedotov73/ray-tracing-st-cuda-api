@@ -5,34 +5,37 @@
 
 using color = vec3;
 
-class color_print
+inline double liner_to_gamma(double liner_component)
 {
-public:
-	double min, max;
+	if (liner_component > 0) { return sqrt(liner_component); }
+	return 0;
+}
 
-	color_print() {}
-	color_print(double min, double max) : min(min), max(max) {}
+double clamp(double x, double min, double max)
+{
+	if (x < min) { return min; }
+	if (x > max) { return max; }
+	return x;
+}
 
-	double clamp(double x) 
-	{
-		if (x < min) { return min; }
-		if (x > max) { return max; }
-		return x;
-	}
+void write_color(std::ostream& out, void* pxcolor)
+{
+	double min = 0.000,
+		   max = 0.999;
 
-	void write_color(std::ostream& out, void* pxcolor)
-	{
-		double r = ((color*)pxcolor)->x();
-		double g = ((color*)pxcolor)->y();
-		double b = ((color*)pxcolor)->z();
+	double r = ((color*)pxcolor)->x();
+	double g = ((color*)pxcolor)->y();
+	double b = ((color*)pxcolor)->z();
 
-		int rbyte = int(256 * clamp(r));
-		int gbyte = int(256 * clamp(g));
-		int bbyte = int(256 * clamp(b));
+	r = liner_to_gamma(r);
+	g = liner_to_gamma(g);
+	b = liner_to_gamma(b);
 
-		out << rbyte << ' ' << gbyte << ' ' << bbyte << '\n';
-	}
+	int rbyte = int(256 * clamp(r, min, max));
+	int gbyte = int(256 * clamp(g, min, max));
+	int bbyte = int(256 * clamp(b, min, max));
 
-};
+	out << rbyte << ' ' << gbyte << ' ' << bbyte << '\n';
+}
 
 #endif

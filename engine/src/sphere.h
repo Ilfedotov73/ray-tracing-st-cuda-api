@@ -8,9 +8,11 @@ class sphere : public hittable
 public:
 	point3 center;
 	double radius;
+	material* mat_ptr;
 
 	__device__ sphere() {}
-	__device__ sphere(const point3& center, double radius) : center(center), radius(radius) {}
+	__device__ sphere(const point3& center, double radius, material* mat_ptr) : center(center), radius(radius), 
+					  mat_ptr(mat_ptr) {}
 	__device__ virtual bool hit(const ray& r, double t_min, double t_max, hit_record& rec) const;
 };
 	__device__ bool sphere::hit(const ray& r, double t_min, double t_max, hit_record& rec) const
@@ -35,6 +37,7 @@ public:
 		vec3 outward_normal = (rec.p - center) / radius;
 		rec.set_face_normal(r, outward_normal);
 		rec.t = root;
+		rec.mat_ptr = mat_ptr;
 
 		return true;
 	}

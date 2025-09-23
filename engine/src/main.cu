@@ -9,6 +9,7 @@
 #include "hittable_list.h"
 #include "sphere.h"
 #include "camera.h"
+#include "material.h"
 
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
@@ -27,32 +28,28 @@ void check_cuda(cudaError_t result, const char *const func, const char *const fi
 	}
 }
 
-#define RANDVEC3 vec3(curand_uniform(local_rand_state),curand_uniform(local_rand_state),curand_uniform(local_rand_state))
-__device__ vec3 random_unit_vector(curandState* local_rand_state)
-{
-	for (;;) {
-		vec3 p = 2.0 * RANDVEC3 - vec3(1,1,1);
-		double lensq = p.length();
-		if (1e-160 < lensq && lensq <= 1) { return p / sqrt(lensq); }
-	}
-}
-
-__device__ color ray_color(const ray& r, hittable** world, curandState* local_rand_state)
+__device__ color ray_color(const ray& r, hittable** world, curandState* local_rand_state, int max_depth)
 {
 	ray current_ray = r;
-	double attenuation = 1.0;
-	for (int i = 0; i < 50; ++i) {
+	color current_attenuation = color(1.0,1.0,1.0);
+	for (int i = 0; i < max_depth; ++i) {
 		hit_record rec;
 		if ((*world)->hit(current_ray, 0.001, DBL_MAX, rec)) {
-			vec3 target = rec.p + rec.normal + random_unit_vector(local_rand_state);
-			attenuation *= 0.5;
-			current_ray = ray(rec.p, target-rec.p);
+			ray	  scattered;
+			color attenuation;
+			if (rec.mat_ptr->scatter(current_ray, rec, attenuation, scattered, local_rand_state)) {
+				current_attenuation *= attenuation;
+				current_ray = scattered;
+			}
+			else {
+				return vec3(0.0,0.0,0.0);
+			}
 		}
 		else {
 			vec3 unit_direction = unitv(current_ray.direction());
 			double a = 0.5 * (unit_direction.y() + 1.0);
 			vec3 c = (1.0 - a) * color(1.0, 1.0, 1.0) + a * color(0.5, 0.7, 1.0);
-			return attenuation * c;
+			return current_attenuation * c;
 		}
 	}
 	return color(0.0,0.0,0.0);
@@ -68,7 +65,7 @@ __global__ void rnd_render_init(int imgwidth, int imgheight, curandState* rand_s
 }
 
 __global__ void render(vec3* fb, hittable** world, camera** cam, curandState* rand_state, int imgwidth, int imgheight,
-					   int samples_per_pixel)
+					   int samples_per_pixel, int max_depth)
 {
 	int i = threadIdx.x + blockIdx.x * blockDim.x;
 	int j = threadIdx.y + blockIdx.y * blockDim.y;
@@ -82,7 +79,7 @@ __global__ void render(vec3* fb, hittable** world, camera** cam, curandState* ra
 		double u = (i + curand_uniform_double(&local_rand_state) - 0.5) / imgwidth;
 		double v = (j + curand_uniform_double(&local_rand_state) - 0.5) / imgheight;
 		ray r = (*cam)->get_ray(u,v);
-		pixel_color += ray_color(r, world, &local_rand_state);
+		pixel_color += ray_color(r, world, &local_rand_state, max_depth);
 	}
 	fb[pixidx] = pixel_color / samples_per_pixel;
 }
@@ -90,17 +87,21 @@ __global__ void render(vec3* fb, hittable** world, camera** cam, curandState* ra
 __global__ void create_world(hittable** d_list, hittable** d_world, camera** d_camera)
 {
 	if (threadIdx.x == 0 &&  blockIdx.x == 0) {
-		*(d_list)   = new sphere(vec3(0,0,-1), 0.5);
-		*(d_list+1) = new sphere(vec3(0, -100.5, -1), 100);
-		*d_world	= new hittable_list(d_list,2);
-		*d_camera   = new camera();
+		d_list[0] = new sphere(vec3(0,0,-1), 0.5, new lambertian(color(0.8, 0.3, 0.3)));
+		d_list[1] = new sphere(vec3(0, -100.5, -1), 100, new lambertian(color(0.8, 0.8, 0.0)));
+		d_list[2] = new sphere(vec3(1, 0, -1), 0.5, new metal(color(0.8, 0.6, 0.2), 0.25));
+		d_list[3] = new sphere(vec3(-1, 0, -1), 0.5, new metal(color(0.8, 0.8, 0.8), 0.1));
+		*d_world = new hittable_list(d_list,4);
+		*d_camera = new camera();
 	}
 }
 
 __global__ void free_world(hittable** d_list, hittable** d_world, camera** d_camera)
 {
-	delete *(d_list);
-	delete *(d_list+1);
+	for (int i = 0; i < 4; ++i) {
+		delete ((sphere*)d_list[i])->mat_ptr;
+		delete d_list[i];
+	}
 	delete *d_world;
 	delete *d_camera;
 }
@@ -113,7 +114,8 @@ int main()
 
 	int IMAGE_WIDTH       = 1200,
 		IMAGE_HEIGHT      = 600,
-		SAMPLES_PER_PIXEL = 100;
+		SAMPLES_PER_PIXEL = 100,
+		MAX_DEPTH			  = 50;
 
 	int num_pix = IMAGE_WIDTH * IMAGE_HEIGHT;
 	size_t fb_size = num_pix*sizeof(vec3);
@@ -152,7 +154,8 @@ int main()
 	clock_t start, stop;
 
 	start = clock();
-	render<<<blocks, threads>>>(fb, d_world, d_camera, d_rand_state, IMAGE_WIDTH, IMAGE_HEIGHT, SAMPLES_PER_PIXEL);
+	render<<<blocks, threads>>>(fb, d_world, d_camera, d_rand_state, IMAGE_WIDTH, IMAGE_HEIGHT, SAMPLES_PER_PIXEL, 
+								MAX_DEPTH);
 	check_cuda_errors(cudaGetLastError());
 	check_cuda_errors(cudaDeviceSynchronize());
 
@@ -163,11 +166,10 @@ int main()
 	std::cerr << "took " << timer << " seconds.\n";
 
 	std::cout << "P3\n" << IMAGE_WIDTH << ' ' << IMAGE_HEIGHT << "\n255\n";
-	color_print print(0.000, 0.999);
 	for (int j = IMAGE_HEIGHT - 1; j >= 0; --j) {
 		for (int i = 0; i < IMAGE_WIDTH; ++i) {
 			size_t pixidx = j*IMAGE_WIDTH + i;
-			print.write_color(std::cout, &fb[pixidx]);
+			write_color(std::cout, &fb[pixidx]);
 		}
 	}
 
