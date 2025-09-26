@@ -90,15 +90,16 @@ __global__ void create_world(hittable** d_list, hittable** d_world, camera** d_c
 		d_list[0] = new sphere(vec3(0,0,-1), 0.5, new lambertian(color(0.8, 0.3, 0.3)));
 		d_list[1] = new sphere(vec3(0, -100.5, -1), 100, new lambertian(color(0.8, 0.8, 0.0)));
 		d_list[2] = new sphere(vec3(1, 0, -1), 0.5, new metal(color(0.8, 0.6, 0.2), 0.25));
-		d_list[3] = new sphere(vec3(-1, 0, -1), 0.5, new metal(color(0.8, 0.8, 0.8), 0.1));
-		*d_world = new hittable_list(d_list,4);
+		d_list[3] = new sphere(vec3(-1, 0, -1), 0.5, new dielectric(1.5));
+		d_list[4] = new sphere(vec3(-1, 0, -1), -0.45, new dielectric(1.5));
+		*d_world = new hittable_list(d_list,5);
 		*d_camera = new camera();
 	}
 }
 
 __global__ void free_world(hittable** d_list, hittable** d_world, camera** d_camera)
 {
-	for (int i = 0; i < 4; ++i) {
+	for (int i = 0; i < 5; ++i) {
 		delete ((sphere*)d_list[i])->mat_ptr;
 		delete d_list[i];
 	}
