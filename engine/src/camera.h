@@ -1,6 +1,8 @@
 ﻿#ifndef CAMERA_H
 #define CAMERA_H
 
+#define _USE_MATH_DEFINES 
+#include <math.h>
 #include "ray.h"
 
 class camera
@@ -11,12 +13,21 @@ public:
 	vec3   PIXEL_DELTA_V;
 	point3 CAMERA_CENTER;
 
-	__device__ camera()
+	__device__ camera(vec3 lookfrom, vec3 lookat, vec3 vup, double vfov, double aspect_ratio)
 	{
-		CAMERA_CENTER = point3(0,0,0);
-		PIXEL_LOC_00  = point3(-2.0,-1.0,-1.0);
-		PIXEL_DELTA_U = vec3(4.0, 0.0, 0.0);
-		PIXEL_DELTA_V = vec3(0.0, 2.0, 0.0);
+		vec3 u, v, w;
+		double theta = vfov*M_PI/180;
+		double h_height = tan(theta/2);
+		double h_width = aspect_ratio * h_height;
+		CAMERA_CENTER = lookfrom;
+
+		w = unitv(lookfrom - lookat);
+		u = unitv(cross(vup, w));
+		v = cross(w, u);
+
+		PIXEL_LOC_00 = CAMERA_CENTER - h_width*u - h_height*v - w;
+		PIXEL_DELTA_U = 2*h_width*u;
+		PIXEL_DELTA_V = 2*h_height*v;
 	}
 
 	__device__ ray get_ray(double u, double v)
