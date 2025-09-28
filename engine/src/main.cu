@@ -78,14 +78,14 @@ __global__ void render(vec3* fb, hittable** world, camera** cam, curandState* ra
 	for (int sample = 0; sample < samples_per_pixel; ++sample) {
 		double u = (i + curand_uniform_double(&local_rand_state) - 0.5) / imgwidth;
 		double v = (j + curand_uniform_double(&local_rand_state) - 0.5) / imgheight;
-		ray r = (*cam)->get_ray(u,v);
+		ray r = (*cam)->get_ray(u,v, &local_rand_state);
 		pixel_color += ray_color(r, world, &local_rand_state, max_depth);
 	}
 	fb[pixidx] = pixel_color / samples_per_pixel;
 }
 
 __global__ void create_world(hittable** d_list, hittable** d_world, camera** d_camera, vec3 lookfrom, vec3 lookat, 
-							 vec3 vup, double vfov, double aspect_ratio)
+							 vec3 vup, double vfov, double aspect_ratio, double focus_angle, double focus_dist)
 {
 	if (threadIdx.x == 0 &&  blockIdx.x == 0) {
 		d_list[0] = new sphere(vec3(0,0,-1), 0.5, new lambertian(color(0.8, 0.3, 0.3)));
@@ -94,7 +94,7 @@ __global__ void create_world(hittable** d_list, hittable** d_world, camera** d_c
 		d_list[3] = new sphere(vec3(-1, 0, -1), 0.5, new dielectric(1.5));
 		d_list[4] = new sphere(vec3(-1, 0, -1), -0.45, new dielectric(1.5));
 		*d_world = new hittable_list(d_list,5);
-		*d_camera = new camera(lookfrom, lookat, vup, vfov, aspect_ratio);
+		*d_camera = new camera(lookfrom, lookat, vup, vfov, aspect_ratio, focus_angle, focus_dist);
 	}
 }
 
@@ -120,11 +120,13 @@ int main()
 		MAX_DEPTH	      = 50,
 		VFOV			  = 20;
 
-	double ASPECT_RATIO = 16.0 / 8.0;
-
-	point3 LOOKFROM = point3(-2,2,1);
+	point3 LOOKFROM = point3(3,3,2);
 	point3 LOOKAT   = point3(0,0,-1);
 	vec3   VUP		= vec3(0,1,0);
+
+	double ASPECT_RATIO = 16.0 / 8.0,
+		   FOCUS_ANGLE  = 2.0,
+		   FOCUS_DIST   = (LOOKFROM - LOOKAT).length();
 
 	int num_pix = IMAGE_WIDTH * IMAGE_HEIGHT;
 	size_t fb_size = num_pix*sizeof(vec3);
@@ -145,7 +147,7 @@ int main()
 	camera** d_camera;
 	check_cuda_errors(cudaMalloc((void**)&d_camera, sizeof(camera*)));
 
-	create_world<<<1,1>>>(d_list, d_world, d_camera, LOOKFROM, LOOKAT, VUP, VFOV, ASPECT_RATIO);
+	create_world<<<1,1>>>(d_list, d_world, d_camera, LOOKFROM, LOOKAT, VUP, VFOV, ASPECT_RATIO, FOCUS_ANGLE, FOCUS_DIST);
 	check_cuda_errors(cudaGetLastError());
 	check_cuda_errors(cudaDeviceSynchronize());
 
