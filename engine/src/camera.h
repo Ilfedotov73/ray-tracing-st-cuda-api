@@ -47,7 +47,7 @@ public:
 	{
 		point3 pixel_sample = PIXEL_LOC_00 + (u * PIXEL_DELTA_U) + (v * PIXEL_DELTA_V);
 		
-		vec3 p = FOCUS_DISK * random_in_unit_disk(local_rand_state);
+		vec3 p = tan(FOCUS_DISK*M_PI/180) * random_in_unit_disk(local_rand_state);
 		point3 ray_origin = CAMERA_CENTER + U*p.x() + V*p.y();
 		vec3 ray_direction = pixel_sample - ray_origin;
 		return ray(ray_origin, ray_direction);

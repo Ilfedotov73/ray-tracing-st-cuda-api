@@ -55,13 +55,20 @@ __device__ color ray_color(const ray& r, hittable** world, curandState* local_ra
 	return color(0.0,0.0,0.0);
 }
 
+__global__ void rnd_scene_init(curandState* rand_state)
+{
+	if (threadIdx.x == 0 && blockIdx.x == 0) {
+		curand_init(1984, 0, 0, rand_state);
+	}
+}
+
 __global__ void rnd_render_init(int imgwidth, int imgheight, curandState* rand_state)
 {
 	int i = threadIdx.x + blockIdx.x * blockDim.x;
 	int j = threadIdx.y + blockIdx.y * blockDim.y;
 	if ((i >= imgwidth) || (j >= imgheight)) { return; }
 	int pixidx = j*imgwidth+i;
-	curand_init(1984, pixidx, 0, &rand_state[pixidx]);
+	curand_init(1984+pixidx, 0, 0, &rand_state[pixidx]);
 }
 
 __global__ void render(vec3* fb, hittable** world, camera** cam, curandState* rand_state, int imgwidth, int imgheight,
@@ -81,26 +88,49 @@ __global__ void render(vec3* fb, hittable** world, camera** cam, curandState* ra
 		ray r = (*cam)->get_ray(u,v, &local_rand_state);
 		pixel_color += ray_color(r, world, &local_rand_state, max_depth);
 	}
+	rand_state[pixidx] = local_rand_state;
 	fb[pixidx] = pixel_color / samples_per_pixel;
 }
 
-__global__ void create_world(hittable** d_list, hittable** d_world, camera** d_camera, vec3 lookfrom, vec3 lookat, 
-							 vec3 vup, double vfov, double aspect_ratio, double focus_angle, double focus_dist)
+#define RND (curand_uniform_double(&local_rand_state))
+__global__ void create_world(hittable** d_list, hittable** d_world, camera** d_camera, curandState* rand_state, 
+							 vec3 lookfrom, vec3 lookat, vec3 vup, double vfov, double aspect_ratio, 
+							 double focus_angle, double focus_dist)
 {
 	if (threadIdx.x == 0 &&  blockIdx.x == 0) {
-		d_list[0] = new sphere(vec3(0,0,-1), 0.5, new lambertian(color(0.8, 0.3, 0.3)));
-		d_list[1] = new sphere(vec3(0, -100.5, -1), 100, new lambertian(color(0.8, 0.8, 0.0)));
-		d_list[2] = new sphere(vec3(1, 0, -1), 0.5, new metal(color(0.8, 0.6, 0.2), 0.25));
-		d_list[3] = new sphere(vec3(-1, 0, -1), 0.5, new dielectric(1.5));
-		d_list[4] = new sphere(vec3(-1, 0, -1), -0.45, new dielectric(1.5));
-		*d_world = new hittable_list(d_list,5);
+		d_list[0] = new sphere(point3(0, -1000.0, 01), 1000, new lambertian(color(0.5, 0.5, 0.5)));
+		curandState local_rand_state = *rand_state;
+
+		int i = 1;
+		for (int a = -11; a < 11; ++a) {
+			for (int b = -11; b < 11; ++b) {
+				double choose_mat = RND;
+				point3 center(a+RND, 0.2, b+RND);
+				if (choose_mat < 0.8) {
+					double rnd_square = RND*RND;
+					d_list[i++] = new sphere(center, 0.2, new lambertian(point3(rnd_square, rnd_square, rnd_square)));
+				}
+				else if (choose_mat < 0.95) {
+					d_list[i++] = new sphere(center, 0.2, new metal(point3(0.5 * (1.0 * RND), 0.5 * (1.0 * RND), 
+																	0.5 * (1.0 * RND)), 0.5 * RND));
+				}
+				else {
+					d_list[i++] = new sphere(center, 0.2, new dielectric(1.5));
+				}
+			}
+		}
+		d_list[i++] = new sphere(vec3(0, 1, 0), 1.0, new dielectric(1.5));
+		d_list[i++] = new sphere(vec3(-4, 1, 0), 1.0, new lambertian(vec3(0.4, 0.2, 0.1)));
+		d_list[i++] = new sphere(vec3(4, 1, 0), 1.0, new metal(vec3(0.7, 0.6, 0.5), 0.0));
+		*rand_state = local_rand_state;
+		*d_world  = new hittable_list(d_list, 488);
 		*d_camera = new camera(lookfrom, lookat, vup, vfov, aspect_ratio, focus_angle, focus_dist);
 	}
 }
 
 __global__ void free_world(hittable** d_list, hittable** d_world, camera** d_camera)
 {
-	for (int i = 0; i < 5; ++i) {
+	for (int i = 0; i < 488; ++i) {
 		delete ((sphere*)d_list[i])->mat_ptr;
 		delete d_list[i];
 	}
@@ -112,34 +142,42 @@ int main()
 {	
 	size_t new_stack_size = 2 * 1024;
 	check_cuda_errors(cudaDeviceSetLimit(cudaLimitStackSize, new_stack_size));
-	std::cerr << "Stack size limit: " << new_stack_size << " bytes" << "\n";
+	std::cerr << "Set stack size limit: " << new_stack_size << " bytes " << "\n";
 
-	int IMAGE_WIDTH       = 1200,
-		IMAGE_HEIGHT      = 600,
-		SAMPLES_PER_PIXEL = 100,
+	int IMAGE_WIDTH       = 1920,
+		IMAGE_HEIGHT      = 1080,
+		SAMPLES_PER_PIXEL = 500,
 		MAX_DEPTH	      = 50,
-		VFOV			  = 20;
+		VFOV			  = 20,
+		OBJ_COUNTS        = 488;
 
-	point3 LOOKFROM = point3(3,3,2);
-	point3 LOOKAT   = point3(0,0,-1);
+	point3 LOOKFROM = point3(13,2,3);
+	point3 LOOKAT   = point3(0,0,0);
 	vec3   VUP		= vec3(0,1,0);
 
-	double ASPECT_RATIO = 16.0 / 8.0,
-		   FOCUS_ANGLE  = 2.0,
-		   FOCUS_DIST   = (LOOKFROM - LOOKAT).length();
+	double ASPECT_RATIO = 16.0 / 9.0,
+		   FOCUS_ANGLE  = 0.6,
+		   FOCUS_DIST   = 10.0; 
 
-	int num_pix = IMAGE_WIDTH * IMAGE_HEIGHT;
-	size_t fb_size = num_pix*sizeof(vec3);
+	int num_pixs = IMAGE_WIDTH * IMAGE_HEIGHT;
+	size_t fb_size = num_pixs*sizeof(vec3);
 
 	vec3* fb;
 	check_cuda_errors(cudaMallocManaged((void**)&fb, fb_size));
 	
 	curandState* d_rand_state;
-	check_cuda_errors(cudaMalloc((void**)&d_rand_state, num_pix*sizeof(curandState)));
+	check_cuda_errors(cudaMalloc((void**)&d_rand_state, num_pixs*sizeof(curandState)));
+	
+	curandState* d_rand_state2;
+	check_cuda_errors(cudaMalloc((void**)&d_rand_state2, sizeof(curandState)));
+
+	rnd_scene_init<<<1,1>>>(d_rand_state2);
+	check_cuda_errors(cudaGetLastError());
+	check_cuda_errors(cudaDeviceSynchronize());
 
 	/* World */
 	hittable** d_list;
-	check_cuda_errors(cudaMalloc((void**)&d_list, 2*sizeof(hittable*)));
+	check_cuda_errors(cudaMalloc((void**)&d_list, OBJ_COUNTS*sizeof(hittable*)));
 	
 	hittable** d_world;
 	check_cuda_errors(cudaMalloc((void**)&d_world, sizeof(hittable*)));
@@ -147,7 +185,8 @@ int main()
 	camera** d_camera;
 	check_cuda_errors(cudaMalloc((void**)&d_camera, sizeof(camera*)));
 
-	create_world<<<1,1>>>(d_list, d_world, d_camera, LOOKFROM, LOOKAT, VUP, VFOV, ASPECT_RATIO, FOCUS_ANGLE, FOCUS_DIST);
+	create_world<<<1,1>>>(d_list, d_world, d_camera, d_rand_state2, LOOKFROM, LOOKAT, VUP, VFOV, ASPECT_RATIO, FOCUS_ANGLE, 
+						  FOCUS_DIST);
 	check_cuda_errors(cudaGetLastError());
 	check_cuda_errors(cudaDeviceSynchronize());
 
@@ -191,6 +230,7 @@ int main()
 	check_cuda_errors(cudaFree(d_world));
 	check_cuda_errors(cudaFree(d_camera));
 	check_cuda_errors(cudaFree(d_rand_state));
+	check_cuda_errors(cudaFree(d_rand_state2));
 	check_cuda_errors(cudaFree(fb));
 	cudaDeviceReset();
 }
