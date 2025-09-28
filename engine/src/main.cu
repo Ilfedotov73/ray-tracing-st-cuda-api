@@ -88,7 +88,6 @@ __global__ void render(vec3* fb, hittable** world, camera** cam, curandState* ra
 		ray r = (*cam)->get_ray(u,v, &local_rand_state);
 		pixel_color += ray_color(r, world, &local_rand_state, max_depth);
 	}
-	rand_state[pixidx] = local_rand_state;
 	fb[pixidx] = pixel_color / samples_per_pixel;
 }
 
@@ -107,8 +106,7 @@ __global__ void create_world(hittable** d_list, hittable** d_world, camera** d_c
 				double choose_mat = RND;
 				point3 center(a+RND, 0.2, b+RND);
 				if (choose_mat < 0.8) {
-					double rnd_square = RND*RND;
-					d_list[i++] = new sphere(center, 0.2, new lambertian(point3(rnd_square, rnd_square, rnd_square)));
+					d_list[i++] = new sphere(center, 0.2, new lambertian(point3(RND*RND, RND*RND, RND*RND)));
 				}
 				else if (choose_mat < 0.95) {
 					d_list[i++] = new sphere(center, 0.2, new metal(point3(0.5 * (1.0 * RND), 0.5 * (1.0 * RND), 
@@ -122,7 +120,6 @@ __global__ void create_world(hittable** d_list, hittable** d_world, camera** d_c
 		d_list[i++] = new sphere(vec3(0, 1, 0), 1.0, new dielectric(1.5));
 		d_list[i++] = new sphere(vec3(-4, 1, 0), 1.0, new lambertian(vec3(0.4, 0.2, 0.1)));
 		d_list[i++] = new sphere(vec3(4, 1, 0), 1.0, new metal(vec3(0.7, 0.6, 0.5), 0.0));
-		*rand_state = local_rand_state;
 		*d_world  = new hittable_list(d_list, 488);
 		*d_camera = new camera(lookfrom, lookat, vup, vfov, aspect_ratio, focus_angle, focus_dist);
 	}
@@ -155,7 +152,7 @@ int main()
 	point3 LOOKAT   = point3(0,0,0);
 	vec3   VUP		= vec3(0,1,0);
 
-	double ASPECT_RATIO = 16.0 / 9.0,
+	double ASPECT_RATIO = 16.0 / 8.0,
 		   FOCUS_ANGLE  = 0.6,
 		   FOCUS_DIST   = 10.0; 
 
